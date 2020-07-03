@@ -1,0 +1,4 @@
+<network ipv6='yes'>
+  <name>proxy1</name>
+  <domain name='proxy1'/>
+</network>

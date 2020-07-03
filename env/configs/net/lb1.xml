@@ -1,0 +1,4 @@
+<network ipv6='yes'>
+  <name>lb1</name>
+  <domain name='lb1'/>
+</network>

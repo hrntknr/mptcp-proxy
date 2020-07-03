@@ -1,0 +1,4 @@
+<network ipv6='yes'>
+  <name>server1</name>
+  <domain name='server1'/>
+</network>
