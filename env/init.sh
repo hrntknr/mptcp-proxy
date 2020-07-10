@@ -11,7 +11,7 @@ if [ ! -f $IMG_DIR/cloudimg.qcow2 ]; then
   if [ ! -f $IMG_DIR/cloudimg.img ]; then
     wget https://cloud-images.ubuntu.com/bionic/current/bionic-server-cloudimg-amd64.img -O $IMG_DIR/cloudimg.img
   fi
-  qemu-img create -b $IMG_DIR/cloudimg.img -f qcow2 $IMG_DIR/cloudimg.qcow2 $DISK_SIZE
+  qemu-img create -b $IMG_DIR/cloudimg.img -F qcow2 -f qcow2 $IMG_DIR/cloudimg.qcow2 $DISK_SIZE
 fi
 
 for net in "${networks[@]}"; do
@@ -32,7 +32,7 @@ for host in "${targets[@]}"; do
 
   if [ ! -f $IMG_DIR/${host}_config.qcow2 ]; then
     userdata=$(mktemp)
-    python make-mime.py -a $CFG_DIR/vm/$host/config.yml:cloud-config -a $CFG_DIR/vm/$host/init.sh:x-shellscript >$userdata
+    python3 make-mime.py -a $CFG_DIR/vm/$host/config.yml:cloud-config -a $CFG_DIR/vm/$host/init.sh:x-shellscript >$userdata
     cloud-localds -v --network-config=$CFG_DIR/vm/$host/network_config.yml $IMG_DIR/${host}_config.qcow2 $userdata
     rm $userdata
   fi
