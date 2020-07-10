@@ -11,7 +11,7 @@ router bgp 65007
  neighbor REMOTE peer-group
  neighbor REMOTE remote-as external
  neighbor REMOTE capability extended-nexthop
- neighbor ens3 interface peer-group REMOTE
+ neighbor enp2s0 interface peer-group REMOTE
  !
  address-family ipv6 unicast
   network fc70::2/64

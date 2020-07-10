@@ -1,6 +1,6 @@
 version: 2
 ethernets:
-  ens2:
+  enp1s0:
     dhcp4: false
     accept-ra: no
     addresses:
@@ -12,43 +12,43 @@ ethernets:
         - fc00::1
         - 192.168.100.1
       search: []
-  ens3:
+  enp2s0:
     dhcp4: false
     accept-ra: no
     addresses:
       - fc30::1/64
     nameservers: {}
-  ens4:
+  enp3s0:
     dhcp4: false
     accept-ra: no
     addresses:
       - fc31::1/64
     nameservers: {}
-  ens5:
+  enp4s0:
     dhcp4: false
     accept-ra: no
     addresses:
       - fc40::1/64
     nameservers: {}
-  ens6:
+  enp5s0:
     dhcp4: false
     accept-ra: no
     addresses:
       - fc50::1/64
     nameservers: {}
-  ens7:
+  enp6s0:
     dhcp4: false
     accept-ra: no
     addresses:
       - fc60::1/64
     nameservers: {}
-  ens8:
+  enp7s0:
     dhcp4: false
     accept-ra: no
     addresses:
       - fc70::1/64
     nameservers: {}
-  ens9:
+  enp8s0:
     dhcp4: false
     accept-ra: no
     addresses:

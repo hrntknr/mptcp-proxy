@@ -11,13 +11,13 @@ router bgp 65002
  neighbor REMOTE peer-group
  neighbor REMOTE remote-as external
  neighbor REMOTE capability extended-nexthop
- neighbor ens3 interface peer-group REMOTE
- neighbor ens4 interface peer-group REMOTE
- neighbor ens5 interface peer-group REMOTE
- neighbor ens6 interface peer-group REMOTE
- neighbor ens7 interface peer-group REMOTE
- neighbor ens8 interface peer-group REMOTE
- neighbor ens9 interface peer-group REMOTE
+ neighbor enp2s0 interface peer-group REMOTE
+ neighbor enp3s0 interface peer-group REMOTE
+ neighbor enp4s0 interface peer-group REMOTE
+ neighbor enp5s0 interface peer-group REMOTE
+ neighbor enp6s0 interface peer-group REMOTE
+ neighbor enp7s0 interface peer-group REMOTE
+ neighbor enp8s0 interface peer-group REMOTE
  !
  address-family ipv6 unicast
   network fc30::1/64

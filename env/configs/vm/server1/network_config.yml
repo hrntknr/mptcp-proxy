@@ -1,6 +1,6 @@
 version: 2
 ethernets:
-  ens2:
+  enp1s0:
     dhcp4: false
     accept-ra: no
     addresses:
@@ -12,7 +12,7 @@ ethernets:
         - fc00::1
         - 192.168.100.1
       search: []
-  ens3:
+  enp2s0:
     dhcp4: false
     accept-ra: no
     addresses:
