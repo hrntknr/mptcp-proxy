@@ -15,8 +15,8 @@ router bgp 65003
  neighbor enp3s0 interface peer-group REMOTE
  !
  address-family ipv6 unicast
-  network fc30::2/64
-  network fc31::2/64
+  network fc23:1::2/64
+  network fc23:2::2/64
   neighbor REMOTE activate
  exit-address-family
 exit

@@ -16,5 +16,5 @@ ethernets:
     dhcp4: false
     accept-ra: no
     addresses:
-      - fc50::2/64
+      - fc25::2/64
     nameservers: {}

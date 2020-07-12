@@ -16,11 +16,11 @@ ethernets:
     dhcp4: false
     accept-ra: no
     addresses:
-      - fc30::2/64
+      - fc23:1::2/64
     nameservers: {}
   enp3s0:
     dhcp4: false
     accept-ra: no
     addresses:
-      - fc31::2/64
+      - fc23:2::2/64
     nameservers: {}

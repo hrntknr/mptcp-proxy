@@ -17,6 +17,7 @@ chpasswd:
   expire: false
 packages:
   - qemu-guest-agent
+  - ipvsadm
   - frr
 apt_sources:
   - source: deb https://deb.frrouting.org/frr bionic frr-stable

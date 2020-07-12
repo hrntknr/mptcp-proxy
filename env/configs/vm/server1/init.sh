@@ -14,7 +14,7 @@ router bgp 65007
  neighbor enp2s0 interface peer-group REMOTE
  !
  address-family ipv6 unicast
-  network fc70::2/64
+  network fc27::2/64
   neighbor REMOTE activate
  exit-address-family
 exit
