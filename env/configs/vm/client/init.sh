@@ -11,8 +11,8 @@ router bgp 65003
  neighbor REMOTE peer-group
  neighbor REMOTE remote-as external
  neighbor REMOTE capability extended-nexthop
- neighbor enp2s0 interface peer-group REMOTE
  neighbor enp3s0 interface peer-group REMOTE
+ neighbor enp4s0 interface peer-group REMOTE
  !
  address-family ipv6 unicast
   network fc23:1::2/64

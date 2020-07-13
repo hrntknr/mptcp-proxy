@@ -5,7 +5,7 @@ ethernets:
       name: lo
     addresses:
       - fc10::1/128
-  enp1s0:
+  enp2s0:
     dhcp4: false
     accept-ra: no
     addresses:
@@ -17,7 +17,7 @@ ethernets:
         - fc00::1
         - 192.168.100.1
       search: []
-  enp2s0:
+  enp3s0:
     dhcp4: false
     accept-ra: no
     addresses:

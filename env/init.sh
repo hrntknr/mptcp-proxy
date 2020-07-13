@@ -39,7 +39,7 @@ for host in "${targets[@]}"; do
 
   if [ ! "$(virsh list --all | awk '{ print $2 }' | grep -e ^$host$)" ]; then
     . config.sh $host
-    sh -c \
+    VM_XML=$(sh -c \
       "virt-install \
       --name $host \
       --virt-type kvm \
@@ -47,6 +47,7 @@ for host in "${targets[@]}"; do
       --vcpus 2 \
       --disk path=$IMG_DIR/$host.qcow2,device=disk \
       --disk path=$IMG_DIR/${host}_config.qcow2,device=cdrom \
+      --filesystem source=$MOUNT_ROOT,target=mptcp_proxy \
       --os-type linux \
       --os-variant debian9 \
       --network network:mgmt \
@@ -54,6 +55,25 @@ for host in "${targets[@]}"; do
       --console pty,target_type=serial \
       --nographics \
       --noautoconsole \
-      --boot useserial=on"
+      --boot useserial=on \
+      --print-xml")
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface" -t elem -n driver <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver" -t attr -n name -v vhost <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver" -t attr -n queues -v 4 <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver" -t elem -n host <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver/host" -t attr -n gso -v off <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver/host" -t attr -n tso4 -v off <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver/host" -t attr -n tso6 -v off <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver/host" -t attr -n ecn -v off <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver/host" -t attr -n ufo -v off <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver" -t elem -n guest <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver/guest" -t attr -n tso4 -v off <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver/guest" -t attr -n tso6 -v off <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver/guest" -t attr -n ecn -v off <<<$VM_XML)
+    VM_XML=$(xmlstarlet ed -s "/domain/devices/interface/driver/guest" -t attr -n ufo -v off <<<$VM_XML)
+    VM_XML_FILE=$(mktemp)
+    echo "$VM_XML" >$VM_XML_FILE
+    virsh define $VM_XML_FILE
+    virsh start $host
   fi
 done

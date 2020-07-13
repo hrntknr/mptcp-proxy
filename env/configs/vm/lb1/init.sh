@@ -11,7 +11,7 @@ router bgp 65004
  neighbor REMOTE peer-group
  neighbor REMOTE remote-as external
  neighbor REMOTE capability extended-nexthop
- neighbor enp2s0 interface peer-group REMOTE
+ neighbor enp3s0 interface peer-group REMOTE
  !
  address-family ipv6 unicast
   network fc24::2/64
@@ -24,7 +24,7 @@ exit
 write memory
 EOS
 
-cat <<EOS >>/etc/netplan/99-custom.yaml
+cat <<EOS >/etc/netplan/99-custom.yaml
 network:
   version: 2
   tunnels:
@@ -50,8 +50,10 @@ while [ 1 ]; do
   break
 done
 
-ip addr add fc11::1 peer fc11::2 dev tun0
-ip addr add fc12::1 peer fc12::2 dev tun1
 ipvsadm -A -t [fc10::1]:80 -s rr
 ipvsadm -a -t [fc10::1]:80 -r [fc11::2]:80 -g
 ipvsadm -a -t [fc10::1]:80 -r [fc12::2]:80 -g
+ipvsadm-save
+
+ip addr add fc11::1 peer fc11::2 dev tun0
+ip addr add fc12::1 peer fc12::2 dev tun1

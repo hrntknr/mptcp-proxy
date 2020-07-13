@@ -2,6 +2,7 @@
 cd $(dirname $0)
 
 if [ $# != 1 ]; then
+  MOUNT_ROOT=$(dirname $(pwd))
   IMG_DIR=$(pwd)/images
   CFG_DIR=$(pwd)/configs
   DISK_SIZE=10G

@@ -11,7 +11,7 @@ router bgp 65007
  neighbor REMOTE peer-group
  neighbor REMOTE remote-as external
  neighbor REMOTE capability extended-nexthop
- neighbor enp2s0 interface peer-group REMOTE
+ neighbor enp3s0 interface peer-group REMOTE
  !
  address-family ipv6 unicast
   network fc27::2/64
@@ -26,4 +26,31 @@ KERNEL_PATTERN="menuentry '(Ubuntu, with Linux [0-9]+.[0-9]+.[0-9]+.mptcp)'"
 KERNEL_NAME=$(cat /boot/grub/grub.cfg | grep -E "$KERNEL_PATTERN" | sed -r "s/^.*$KERNEL_PATTERN.*$/\1/")
 sed -i "s/GRUB_DEFAULT=0/GRUB_DEFAULT=\"$KERNEL_NAME\"/g" /etc/default/grub
 update-grub
+
+cat <<EOS >/etc/netplan/99-custom.yaml
+network:
+  version: 2
+  tunnels:
+    tun0:
+      mode: ip6ip6
+      local: fc27::2
+      remote: fc25::2
+    tun1:
+      mode: ip6ip6
+      local: fc27::2
+      remote: fc26::2
+EOS
+netplan apply -f
+
+while [ 1 ]; do
+  sleep 1
+  if [ "$(cat /sys/class/net/tun0/carrier)" = "0" ]; then
+    continue
+  fi
+  if [ "$(cat /sys/class/net/tun1/carrier)" = "0" ]; then
+    continue
+  fi
+  break
+done
+
 reboot

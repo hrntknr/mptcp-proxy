@@ -1,6 +1,6 @@
 version: 2
 ethernets:
-  enp1s0:
+  enp2s0:
     dhcp4: false
     accept-ra: no
     addresses:
@@ -12,15 +12,17 @@ ethernets:
         - fc00::1
         - 192.168.100.1
       search: []
-  enp2s0:
-    dhcp4: false
-    accept-ra: no
-    addresses:
-      - fc23:1::2/64
-    nameservers: {}
   enp3s0:
     dhcp4: false
     accept-ra: no
+    mtu: 1460
+    addresses:
+      - fc23:1::2/64
+    nameservers: {}
+  enp4s0:
+    dhcp4: false
+    accept-ra: no
+    mtu: 1460
     addresses:
       - fc23:2::2/64
     nameservers: {}
