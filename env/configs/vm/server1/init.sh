@@ -34,11 +34,7 @@ network:
     tun0:
       mode: ip6ip6
       local: fc27::2
-      remote: fc25::2
-    tun1:
-      mode: ip6ip6
-      local: fc27::2
-      remote: fc26::2
+      remote: fc13::1
 EOS
 netplan apply -f
 
@@ -47,10 +43,9 @@ while [ 1 ]; do
   if [ "$(cat /sys/class/net/tun0/carrier)" = "0" ]; then
     continue
   fi
-  if [ "$(cat /sys/class/net/tun1/carrier)" = "0" ]; then
-    continue
-  fi
   break
 done
 
 reboot
+
+# ip addr add fc10::1/128 dev tun0

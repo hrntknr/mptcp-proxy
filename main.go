@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,6 +11,9 @@ import (
 	log "github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
+
+const SERVICE_MAP_SIZE = 64
+const BACKEND_ARRAY_SIZE = 64
 
 func main() {
 	if err := startProxy(); err != nil {
@@ -25,15 +29,17 @@ func startProxy() error {
 	}
 
 	spec.Maps["services"] = &ebpf.MapSpec{
-		Type:       ebpf.HashOfMaps,
+		Type:       ebpf.Hash,
 		KeySize:    18,
-		MaxEntries: 64,
-		InnerMap: &ebpf.MapSpec{
-			Type:       ebpf.Array,
-			KeySize:    4,
-			ValueSize:  32,
-			MaxEntries: 64,
-		},
+		ValueSize:  20,
+		MaxEntries: SERVICE_MAP_SIZE,
+	}
+
+	spec.Maps["backends"] = &ebpf.MapSpec{
+		Type:       ebpf.Array,
+		KeySize:    4,
+		ValueSize:  16,
+		MaxEntries: BACKEND_ARRAY_SIZE * SERVICE_MAP_SIZE,
 	}
 
 	coll, err := ebpf.NewCollection(spec)
@@ -49,6 +55,34 @@ func startProxy() error {
 	services := coll.Maps["services"]
 	if services == nil {
 		return fmt.Errorf("eBPF map 'services' not found")
+	}
+
+	backends := coll.Maps["backends"]
+	if backends == nil {
+		return fmt.Errorf("eBPF map 'backends' not found")
+	}
+
+	for i, serviceConf := range config.Services {
+		serviceKey := &ServiceKey{
+			VIP:  net.ParseIP(serviceConf.VIP),
+			Port: serviceConf.Port,
+		}
+		serviceInfo := &ServiceInfo{
+			ID:  uint32(i),
+			Src: net.ParseIP(serviceConf.Src),
+		}
+		if err := services.Put(serviceKey, serviceInfo); err != nil {
+			return err
+		}
+
+		for j, backendConf := range serviceConf.Backends {
+			backendInfo := &BackendInfo{
+				Dst: net.ParseIP(backendConf),
+			}
+			if err := backends.Put(uint32(BACKEND_ARRAY_SIZE*i+j), backendInfo); err != nil {
+				return err
+			}
+		}
 	}
 
 	link, err := netlink.LinkByName(config.Iface)

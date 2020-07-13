@@ -1,0 +1,8 @@
+iface: enp3s0
+services:
+  - port: 80
+    vip: fc10::1
+    backends:
+      - fc27::2
+      - fc28::2
+    src: fc13::1
