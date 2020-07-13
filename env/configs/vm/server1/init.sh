@@ -35,6 +35,8 @@ network:
       mode: ip6ip6
       local: fc27::2
       remote: fc13::1
+      addresses:
+        - fc10::1/128
 EOS
 netplan apply -f
 
@@ -45,7 +47,3 @@ while [ 1 ]; do
   fi
   break
 done
-
-reboot
-
-# ip addr add fc10::1/128 dev tun0

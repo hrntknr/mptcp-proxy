@@ -107,23 +107,13 @@ static inline int process_ip6ip6hdr(struct xdp_md *ctx, void *nxt_ptr, struct et
 {
   void *data_end = (void *)(long)ctx->data_end;
   struct ip6_hdr *ip6ip6 = (struct ip6_hdr *)nxt_ptr;
-  void *new_nxt_ptr;
 
   assert_len(ip6ip6, data_end);
 
-  if (ip6ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt != IPPROTO_DSTOPTS)
+  if (ip6ip6->ip6_ctlun.ip6_un1.ip6_un1_nxt != IPPROTO_IPV6)
     return XDP_PASS;
 
-  struct ip6_dest *ip6ip6_dest = (struct ip6_dest *)(ip6ip6 + 1);
-  assert_len(ip6ip6_dest, data_end);
-
-  new_nxt_ptr = (void *)(ip6ip6_dest + 1);
-  new_nxt_ptr = new_nxt_ptr + 6 + ip6ip6_dest->ip6d_len * 8;
-
-  if (ip6ip6_dest->ip6d_nxt != IPPROTO_IPV6)
-    return XDP_PASS;
-
-  return process_ip6hdr(ctx, new_nxt_ptr, eth, ip6ip6);
+  return process_ip6hdr(ctx, ip6ip6 + 1, eth, ip6ip6);
 }
 
 static inline int process_ethhdr(struct xdp_md *ctx)
