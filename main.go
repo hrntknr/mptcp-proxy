@@ -24,6 +24,18 @@ func startProxy() error {
 		return err
 	}
 
+	spec.Maps["services"] = &ebpf.MapSpec{
+		Type:       ebpf.HashOfMaps,
+		KeySize:    18,
+		MaxEntries: 64,
+		InnerMap: &ebpf.MapSpec{
+			Type:       ebpf.Array,
+			KeySize:    4,
+			ValueSize:  32,
+			MaxEntries: 64,
+		},
+	}
+
 	coll, err := ebpf.NewCollection(spec)
 	if err != nil {
 		return err
@@ -32,6 +44,11 @@ func startProxy() error {
 	mptcpLB := coll.Programs["mptcp_proxy"]
 	if mptcpLB == nil {
 		return fmt.Errorf("eBPF prog 'mptcp_proxy' not found")
+	}
+
+	services := coll.Maps["services"]
+	if services == nil {
+		return fmt.Errorf("eBPF map 'services' not found")
 	}
 
 	link, err := netlink.LinkByName(config.Iface)
