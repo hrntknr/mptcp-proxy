@@ -47,3 +47,5 @@ while [ 1 ]; do
   fi
   break
 done
+
+reboot
