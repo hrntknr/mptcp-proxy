@@ -27,6 +27,8 @@ KERNEL_NAME=$(cat /boot/grub/grub.cfg | grep -E "$KERNEL_PATTERN" | sed -r "s/^.
 sed -i "s/GRUB_DEFAULT=0/GRUB_DEFAULT=\"$KERNEL_NAME\"/g" /etc/default/grub
 update-grub
 
+echo "net.mptcp.mptcp_path_manager=default" >>/etc/sysctl.conf
+
 cat <<EOS >/etc/netplan/99-custom.yaml
 network:
   version: 2
