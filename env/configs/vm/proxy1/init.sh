@@ -32,3 +32,5 @@ TMP=$(mktemp)
 wget -q https://golang.org/dl/go1.14.4.linux-amd64.tar.gz -O $TMP
 tar -C /usr/local -xzf $TMP
 ln -s /usr/local/go/bin/* /usr/local/bin
+
+reboot

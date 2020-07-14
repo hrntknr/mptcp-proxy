@@ -17,6 +17,7 @@ chpasswd:
   expire: false
 packages:
   - qemu-guest-agent
+  - linux-image-5.4.0-40-generic
   - build-essential
   - llvm
   - frr

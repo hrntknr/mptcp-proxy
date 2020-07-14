@@ -26,5 +26,5 @@ EOS
 
 ipvsadm -A -t [fc10::1]:80 -s rr
 ipvsadm -a -t [fc10::1]:80 -r fc25::2 -i
-ipvsadm -a -t [fc10::1]:80 -r fc26::2 -i
+# ipvsadm -a -t [fc10::1]:80 -r fc26::2 -i
 ipvsadm-save

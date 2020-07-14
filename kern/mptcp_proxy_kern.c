@@ -1,10 +1,11 @@
 #include <string.h>
-#include <linux/bpf.h>
-#include <linux/if_ether.h>
-#include <linux/ipv6.h>
 #include <netinet/ip6.h>
-#include <linux/tcp.h>
 #include <arpa/inet.h>
+
+#include "mptcp/include/uapi/linux/bpf.h"
+#include "mptcp/include/uapi/linux/if_ether.h"
+#include "mptcp/include/uapi/linux/ipv6.h"
+#include "mptcp/include/uapi/linux/tcp.h"
 
 #include "bpf_helpers.h"
 #include "bpf_endian.h"
@@ -15,6 +16,12 @@
 
 #define SERVICE_MAP_SIZE 64
 #define BACKEND_ARRAY_SIZE 64
+
+#define MAX_TCPOPT_LEN 16
+
+#define TCPOPT_NOP 1
+#define TCPOPT_EOL 0
+#define TCPOPT_MPTCP 30
 
 struct service_key
 {
@@ -58,21 +65,14 @@ static inline int swap_mac(struct xdp_md *ctx, struct ethhdr *eth)
   return 0;
 }
 
-static inline int process_tcphdr(struct xdp_md *ctx, void *nxt_ptr, struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6_hdr *ip6)
+static inline int forward(struct xdp_md *ctx, struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6_hdr *ip6, struct tcphdr *tcp)
 {
-  void *data_end = (void *)(long)ctx->data_end;
-  struct tcphdr *tcp = (struct tcphdr *)nxt_ptr;
-
   struct service_key skey = {};
   struct service_info *service;
   struct backend_info *backend;
   __u32 backend_index = 0;
 
-  assert_len(tcp, data_end);
-
-  swap_mac(ctx, eth);
-
-  memcpy(skey.vip, ip6->ip6_dst.in6_u.u6_addr8, sizeof(__u8) * 16);
+  memcpy(skey.vip, ip6->ip6_dst.__in6_u.__u6_addr8, sizeof(__u8) * 16);
   skey.port = bpf_ntohs(tcp->dest);
 
   service = bpf_map_lookup_elem(&services, &skey);
@@ -84,10 +84,70 @@ static inline int process_tcphdr(struct xdp_md *ctx, void *nxt_ptr, struct ethhd
   if (!backend)
     return XDP_DROP;
 
-  memcpy(ip6ip6->ip6_dst.in6_u.u6_addr8, backend->dst, sizeof(__u8) * 16);
-  memcpy(ip6ip6->ip6_src.in6_u.u6_addr8, service->src, sizeof(__u8) * 16);
+  swap_mac(ctx, eth);
+  memcpy(ip6ip6->ip6_dst.__in6_u.__u6_addr8, backend->dst, sizeof(__u8) * 16);
+  memcpy(ip6ip6->ip6_src.__in6_u.__u6_addr8, service->src, sizeof(__u8) * 16);
 
   return XDP_TX;
+}
+
+static inline int process_tcpopt(struct xdp_md *ctx, void *nxt_ptr, struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6_hdr *ip6, struct tcphdr *tcp)
+{
+  void *data_end = (void *)(long)ctx->data_end;
+  int opt_len = 4 * tcp->doff - sizeof(struct tcphdr);
+  void *opt_end = nxt_ptr + opt_len;
+  __u8 opcode;
+  __u8 opsize;
+
+  if (nxt_ptr + opt_len > data_end)
+    return XDP_DROP;
+
+  for (__u8 i = 0; i < MAX_TCPOPT_LEN; i++)
+  {
+    if (nxt_ptr + 1 > opt_end)
+      break;
+
+    if (nxt_ptr + 1 > data_end)
+      return XDP_DROP;
+    opcode = *(__u8 *)nxt_ptr;
+
+    if (opcode == TCPOPT_EOL)
+      break;
+    if (opcode == TCPOPT_NOP)
+    {
+      nxt_ptr++;
+      continue;
+    }
+
+    if (nxt_ptr + 2 > data_end)
+      return XDP_DROP;
+    opsize = *(__u8 *)(nxt_ptr + 1);
+
+    if (opsize < 2)
+      return XDP_DROP;
+
+    if (nxt_ptr + opsize > data_end)
+      return XDP_DROP;
+
+    if (opcode == TCPOPT_MPTCP)
+    {
+      bpf_printk("MPTCP\n");
+    }
+
+    nxt_ptr += opsize;
+  }
+
+  return forward(ctx, eth, ip6ip6, ip6, tcp);
+}
+
+static inline int process_tcphdr(struct xdp_md *ctx, void *nxt_ptr, struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6_hdr *ip6)
+{
+  void *data_end = (void *)(long)ctx->data_end;
+  struct tcphdr *tcp = (struct tcphdr *)nxt_ptr;
+
+  assert_len(tcp, data_end);
+
+  return process_tcpopt(ctx, tcp + 1, eth, ip6ip6, ip6, tcp);
 }
 
 static inline int process_ip6hdr(struct xdp_md *ctx, void *nxt_ptr, struct ethhdr *eth, struct ip6_hdr *ip6ip6)
