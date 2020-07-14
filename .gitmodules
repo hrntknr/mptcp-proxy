@@ -1,6 +1,3 @@
 [submodule "kern/libbpf"]
 	path = kern/libbpf
 	url = https://github.com/libbpf/libbpf.git
-[submodule "kern/mptcp"]
-	path = kern/mptcp
-	url = https://github.com/multipath-tcp/mptcp.git

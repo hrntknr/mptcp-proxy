@@ -1,11 +1,10 @@
 #include <string.h>
+#include <linux/bpf.h>
+#include <linux/if_ether.h>
+#include <linux/ipv6.h>
 #include <netinet/ip6.h>
+#include <linux/tcp.h>
 #include <arpa/inet.h>
-
-#include "mptcp/include/uapi/linux/bpf.h"
-#include "mptcp/include/uapi/linux/if_ether.h"
-#include "mptcp/include/uapi/linux/ipv6.h"
-#include "mptcp/include/uapi/linux/tcp.h"
 
 #include "bpf_helpers.h"
 #include "bpf_endian.h"
@@ -72,7 +71,7 @@ static inline int forward(struct xdp_md *ctx, struct ethhdr *eth, struct ip6_hdr
   struct backend_info *backend;
   __u32 backend_index = 0;
 
-  memcpy(skey.vip, ip6->ip6_dst.__in6_u.__u6_addr8, sizeof(__u8) * 16);
+  memcpy(skey.vip, ip6->ip6_dst.in6_u.u6_addr8, sizeof(__u8) * 16);
   skey.port = bpf_ntohs(tcp->dest);
 
   service = bpf_map_lookup_elem(&services, &skey);
@@ -85,8 +84,8 @@ static inline int forward(struct xdp_md *ctx, struct ethhdr *eth, struct ip6_hdr
     return XDP_DROP;
 
   swap_mac(ctx, eth);
-  memcpy(ip6ip6->ip6_dst.__in6_u.__u6_addr8, backend->dst, sizeof(__u8) * 16);
-  memcpy(ip6ip6->ip6_src.__in6_u.__u6_addr8, service->src, sizeof(__u8) * 16);
+  memcpy(ip6ip6->ip6_dst.in6_u.u6_addr8, backend->dst, sizeof(__u8) * 16);
+  memcpy(ip6ip6->ip6_src.in6_u.u6_addr8, service->src, sizeof(__u8) * 16);
 
   return XDP_TX;
 }
