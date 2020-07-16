@@ -42,6 +42,13 @@ func startProxy() error {
 		MaxEntries: BACKEND_ARRAY_SIZE * SERVICE_MAP_SIZE,
 	}
 
+	spec.Maps["xsks_map"] = &ebpf.MapSpec{
+		Type:       ebpf.XSKMap,
+		KeySize:    4,
+		ValueSize:  4,
+		MaxEntries: 64,
+	}
+
 	coll, err := ebpf.NewCollection(spec)
 	if err != nil {
 		return err
@@ -60,6 +67,11 @@ func startProxy() error {
 	backends := coll.Maps["backends"]
 	if backends == nil {
 		return fmt.Errorf("eBPF map 'backends' not found")
+	}
+
+	xsks := coll.Maps["xsks_map"]
+	if xsks == nil {
+		return fmt.Errorf("eBPF map 'xsks_map' not found")
 	}
 
 	for i, serviceConf := range config.Services {

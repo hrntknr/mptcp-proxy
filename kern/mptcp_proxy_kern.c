@@ -22,6 +22,9 @@
 #define TCPOPT_EOL 0
 #define TCPOPT_MPTCP 30
 
+#define MPTCP_SUB_JOIN 1
+#define MPTCP_SUB_ADD_ADDR 3
+
 struct service_key
 {
   __u8 vip[16];
@@ -51,6 +54,13 @@ struct bpf_map_def SEC("maps") backends = {
     .key_size = sizeof(__u32),
     .value_size = sizeof(struct backend_info),
     .max_entries = BACKEND_ARRAY_SIZE * SERVICE_MAP_SIZE,
+};
+
+struct bpf_map_def SEC("maps") xsks_map = {
+    .type = BPF_MAP_TYPE_XSKMAP,
+    .key_size = sizeof(int),
+    .value_size = sizeof(int),
+    .max_entries = 64,
 };
 
 static inline int swap_mac(struct xdp_md *ctx, struct ethhdr *eth)
@@ -97,6 +107,7 @@ static inline int process_tcpopt(struct xdp_md *ctx, void *nxt_ptr, struct ethhd
   void *opt_end = nxt_ptr + opt_len;
   __u8 opcode;
   __u8 opsize;
+  __u8 subtype;
 
   if (nxt_ptr + opt_len > data_end)
     return XDP_DROP;
@@ -130,7 +141,18 @@ static inline int process_tcpopt(struct xdp_md *ctx, void *nxt_ptr, struct ethhd
 
     if (opcode == TCPOPT_MPTCP)
     {
-      bpf_printk("MPTCP\n");
+      if (nxt_ptr + 3 > data_end)
+        return XDP_DROP;
+      subtype = *(__u8 *)(nxt_ptr + 2) >> 4;
+      switch (subtype)
+      {
+      case MPTCP_SUB_JOIN:
+        bpf_printk("MPTCP_SUB_JOIN\n");
+        return bpf_redirect_map(&xsks_map, ctx->rx_queue_index, 0);
+      case MPTCP_SUB_ADD_ADDR:
+        bpf_printk("MPTCP_SUB_ADD_ADDR\n");
+        return bpf_redirect_map(&xsks_map, ctx->rx_queue_index, 0);
+      }
     }
 
     nxt_ptr += opsize;

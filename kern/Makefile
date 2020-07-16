@@ -1,4 +1,4 @@
-TARGET_PROXY := mptcp_proxy
+TARGET := mptcp_proxy
 
 LLC ?= llc
 CLANG ?= clang
@@ -6,7 +6,7 @@ CC ?= gcc
 
 LIBBPF_DIR = ./libbpf/src/
 
-PROXY_C = ${TARGET_PROXY:=_kern.c}
+PROXY_C = ${TARGET:=_kern.c}
 PROXY_OBJ = ${PROXY_C:.c=.o}
 OBJECT_LIBBPF = $(LIBBPF_DIR)/libbpf.a
 
