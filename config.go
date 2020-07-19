@@ -6,6 +6,7 @@ import (
 
 type Config struct {
 	Iface    string    `mapstructure:"iface"`
+	QueueID  int       `mapstructure:"queue_id"`
 	XdpProg  string    `mapstructure:"xdp_prog"`
 	Services []Service `mapstructure:"services"`
 }
@@ -27,6 +28,7 @@ func init() {
 	viper.AddConfigPath(".")
 
 	viper.SetDefault("iface", "eth0")
+	viper.SetDefault("queue_id", "0")
 	viper.SetDefault("xdp_prog", "kern/mptcp_proxy_kern.o")
 	viper.SetDefault("services", []Service{})
 

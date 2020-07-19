@@ -22,8 +22,8 @@
 #define TCPOPT_EOL 0
 #define TCPOPT_MPTCP 30
 
+#define MPTCP_SUB_CAPABLE 0
 #define MPTCP_SUB_JOIN 1
-#define MPTCP_SUB_ADD_ADDR 3
 
 struct service_key
 {
@@ -63,7 +63,7 @@ struct bpf_map_def SEC("maps") xsks_map = {
     .max_entries = 64,
 };
 
-static inline int swap_mac(struct xdp_md *ctx, struct ethhdr *eth)
+static inline int swap_mac(struct ethhdr *eth)
 {
   unsigned char tmp[ETH_ALEN];
 
@@ -74,7 +74,7 @@ static inline int swap_mac(struct xdp_md *ctx, struct ethhdr *eth)
   return 0;
 }
 
-static inline int forward(struct xdp_md *ctx, struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6_hdr *ip6, struct tcphdr *tcp)
+static inline int forward(struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6_hdr *ip6, struct tcphdr *tcp)
 {
   struct service_key skey = {};
   struct service_info *service;
@@ -86,23 +86,24 @@ static inline int forward(struct xdp_md *ctx, struct ethhdr *eth, struct ip6_hdr
 
   service = bpf_map_lookup_elem(&services, &skey);
   if (!service)
-    return XDP_DROP;
+    return -1;
 
   backend_index = BACKEND_ARRAY_SIZE * service->id + 0;
   backend = bpf_map_lookup_elem(&backends, &backend_index);
   if (!backend)
-    return XDP_DROP;
+    return -1;
 
-  swap_mac(ctx, eth);
+  swap_mac(eth);
   memcpy(ip6ip6->ip6_dst.in6_u.u6_addr8, backend->dst, sizeof(__u8) * 16);
   memcpy(ip6ip6->ip6_src.in6_u.u6_addr8, service->src, sizeof(__u8) * 16);
 
-  return XDP_TX;
+  return 0;
 }
 
 static inline int process_tcpopt(struct xdp_md *ctx, void *nxt_ptr, struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6_hdr *ip6, struct tcphdr *tcp)
 {
   void *data_end = (void *)(long)ctx->data_end;
+  int index = ctx->rx_queue_index;
   int opt_len = 4 * tcp->doff - sizeof(struct tcphdr);
   void *opt_end = nxt_ptr + opt_len;
   __u8 opcode;
@@ -110,6 +111,9 @@ static inline int process_tcpopt(struct xdp_md *ctx, void *nxt_ptr, struct ethhd
   __u8 subtype;
 
   if (nxt_ptr + opt_len > data_end)
+    return XDP_DROP;
+
+  if (forward(eth, ip6ip6, ip6, tcp))
     return XDP_DROP;
 
   for (__u8 i = 0; i < MAX_TCPOPT_LEN; i++)
@@ -146,19 +150,21 @@ static inline int process_tcpopt(struct xdp_md *ctx, void *nxt_ptr, struct ethhd
       subtype = *(__u8 *)(nxt_ptr + 2) >> 4;
       switch (subtype)
       {
+      case MPTCP_SUB_CAPABLE:
+        if (bpf_map_lookup_elem(&xsks_map, &index))
+          return bpf_redirect_map(&xsks_map, index, 0);
+        return XDP_DROP;
       case MPTCP_SUB_JOIN:
-        bpf_printk("MPTCP_SUB_JOIN\n");
-        return bpf_redirect_map(&xsks_map, ctx->rx_queue_index, 0);
-      case MPTCP_SUB_ADD_ADDR:
-        bpf_printk("MPTCP_SUB_ADD_ADDR\n");
-        return bpf_redirect_map(&xsks_map, ctx->rx_queue_index, 0);
+        if (bpf_map_lookup_elem(&xsks_map, &index))
+          return bpf_redirect_map(&xsks_map, index, 0);
+        return XDP_DROP;
       }
     }
 
     nxt_ptr += opsize;
   }
 
-  return forward(ctx, eth, ip6ip6, ip6, tcp);
+  return XDP_TX;
 }
 
 static inline int process_tcphdr(struct xdp_md *ctx, void *nxt_ptr, struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6_hdr *ip6)

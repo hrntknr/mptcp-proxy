@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/cilium/ebpf"
+	"github.com/hrntknr/xdp"
 	log "github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
@@ -23,6 +25,12 @@ func main() {
 
 func startProxy() error {
 	log.Info("Starting mptcp-proxy ...")
+
+	link, err := netlink.LinkByName(config.Iface)
+	if err != nil {
+		return err
+	}
+
 	spec, err := ebpf.LoadCollectionSpec(config.XdpProg)
 	if err != nil {
 		return err
@@ -97,10 +105,35 @@ func startProxy() error {
 		}
 	}
 
-	link, err := netlink.LinkByName(config.Iface)
+	xsk, err := xdp.NewRawSocket(link.Attrs().Index, config.QueueID)
 	if err != nil {
 		return err
 	}
+	if err = xsks.Put(uint32(config.QueueID), uint32(xsk.FD())); err != nil {
+		return err
+	}
+
+	go func() {
+		for {
+			xsk.Fill(xsk.GetDescs(xsk.NumFreeFillSlots()))
+
+			numRx, _, err := xsk.Poll(-1)
+			if err != nil {
+				log.Error(err)
+				continue
+			}
+			if numRx > 0 {
+				log.Debugf("recv numRx: %d", numRx)
+				descs := xsk.Receive(numRx)
+				for i := range descs {
+					log.Debugf("desc: %+v", descs[i])
+					frame := xsk.GetFrame(descs[i])
+					fmt.Print(hex.Dump(frame))
+				}
+				xsk.Transmit(descs)
+			}
+		}
+	}()
 
 	if err := netlink.LinkSetXdpFd(link, mptcpLB.FD()); err != nil {
 		return err
