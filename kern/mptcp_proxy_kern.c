@@ -8,6 +8,7 @@
 
 #include "bpf_helpers.h"
 #include "bpf_endian.h"
+#include "jhash.h"
 
 #define assert_len(target, end)   \
   if ((void *)(target + 1) > end) \
@@ -17,6 +18,7 @@
 #define BACKEND_ARRAY_SIZE 64
 
 #define MAX_TCPOPT_LEN 16
+#define MAX_CPUS 64
 
 #define TCPOPT_NOP 1
 #define TCPOPT_EOL 0
@@ -24,6 +26,8 @@
 
 #define MPTCP_SUB_CAPABLE 0
 #define MPTCP_SUB_JOIN 1
+
+#define MPTCP_SUB_LEN_CAPABLE_SYN 12
 
 struct service_key
 {
@@ -42,6 +46,12 @@ struct backend_info
   __u8 dst[16];
 };
 
+struct new_client_notice
+{
+  __u64 client_key;
+  __u32 backend_index;
+};
+
 struct bpf_map_def SEC("maps") services = {
     .type = BPF_MAP_TYPE_HASH,
     .key_size = sizeof(struct service_key),
@@ -56,11 +66,25 @@ struct bpf_map_def SEC("maps") backends = {
     .max_entries = BACKEND_ARRAY_SIZE * SERVICE_MAP_SIZE,
 };
 
+struct bpf_map_def SEC("maps") backends_len = {
+    .type = BPF_MAP_TYPE_ARRAY,
+    .key_size = sizeof(__u32),
+    .value_size = sizeof(__u32),
+    .max_entries = SERVICE_MAP_SIZE,
+};
+
 struct bpf_map_def SEC("maps") xsks_map = {
     .type = BPF_MAP_TYPE_XSKMAP,
     .key_size = sizeof(int),
     .value_size = sizeof(int),
     .max_entries = 64,
+};
+
+struct bpf_map_def SEC("maps") new_client = {
+    .type = BPF_MAP_TYPE_PERF_EVENT_ARRAY,
+    .key_size = sizeof(int),
+    .value_size = sizeof(int),
+    .max_entries = MAX_CPUS,
 };
 
 static inline int swap_mac(struct ethhdr *eth)
@@ -74,21 +98,20 @@ static inline int swap_mac(struct ethhdr *eth)
   return 0;
 }
 
-static inline int forward(struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6_hdr *ip6, struct tcphdr *tcp)
+static inline __u32 hash_tuples(struct ip6_hdr *ip6, struct tcphdr *tcp)
 {
-  struct service_key skey = {};
-  struct service_info *service;
+  __u32 hash;
+  hash = jhash_1word(tcp->source, 0xfeedfeed);
+  hash = jhash2(ip6->ip6_src.in6_u.u6_addr32, 4, hash);
+  return hash;
+}
+
+static inline int forward(struct service_info *service, int backend_priv_index, struct ethhdr *eth, struct ip6_hdr *ip6ip6)
+{
   struct backend_info *backend;
   __u32 backend_index = 0;
 
-  memcpy(skey.vip, ip6->ip6_dst.in6_u.u6_addr8, sizeof(__u8) * 16);
-  skey.port = bpf_ntohs(tcp->dest);
-
-  service = bpf_map_lookup_elem(&services, &skey);
-  if (!service)
-    return -1;
-
-  backend_index = BACKEND_ARRAY_SIZE * service->id + 0;
+  backend_index = BACKEND_ARRAY_SIZE * service->id + backend_priv_index;
   backend = bpf_map_lookup_elem(&backends, &backend_index);
   if (!backend)
     return -1;
@@ -103,17 +126,26 @@ static inline int forward(struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6
 static inline int process_tcpopt(struct xdp_md *ctx, void *nxt_ptr, struct ethhdr *eth, struct ip6_hdr *ip6ip6, struct ip6_hdr *ip6, struct tcphdr *tcp)
 {
   void *data_end = (void *)(long)ctx->data_end;
+  struct new_client_notice notice = {};
+  struct service_key skey = {};
+  struct service_info *service;
   int index = ctx->rx_queue_index;
   int opt_len = 4 * tcp->doff - sizeof(struct tcphdr);
   void *opt_end = nxt_ptr + opt_len;
   __u8 opcode;
   __u8 opsize;
   __u8 subtype;
+  __u32 hash;
+  __u32 *backend_len;
 
   if (nxt_ptr + opt_len > data_end)
     return XDP_DROP;
 
-  if (forward(eth, ip6ip6, ip6, tcp))
+  memcpy(skey.vip, ip6->ip6_dst.in6_u.u6_addr8, sizeof(__u8) * 16);
+  skey.port = bpf_ntohs(tcp->dest);
+
+  service = bpf_map_lookup_elem(&services, &skey);
+  if (!service)
     return XDP_DROP;
 
   for (__u8 i = 0; i < MAX_TCPOPT_LEN; i++)
@@ -151,9 +183,24 @@ static inline int process_tcpopt(struct xdp_md *ctx, void *nxt_ptr, struct ethhd
       switch (subtype)
       {
       case MPTCP_SUB_CAPABLE:
-        if (bpf_map_lookup_elem(&xsks_map, &index))
-          return bpf_redirect_map(&xsks_map, index, 0);
-        return XDP_DROP;
+        if (opsize != MPTCP_SUB_LEN_CAPABLE_SYN)
+          return XDP_DROP;
+        if (nxt_ptr + MPTCP_SUB_LEN_CAPABLE_SYN > data_end)
+          return XDP_DROP;
+
+        hash = hash_tuples(ip6, tcp);
+        backend_len = bpf_map_lookup_elem(&backends_len, &service->id);
+        if (!backend_len)
+          return XDP_DROP;
+        notice.backend_index = hash % *backend_len;
+
+        if (forward(service, notice.backend_index, eth, ip6ip6))
+          return XDP_DROP;
+
+        notice.client_key = *(__u64 *)(nxt_ptr + 4);
+        bpf_perf_event_output(ctx, &new_client, BPF_F_CURRENT_CPU, &notice, sizeof(notice));
+
+        return XDP_TX;
       case MPTCP_SUB_JOIN:
         if (bpf_map_lookup_elem(&xsks_map, &index))
           return bpf_redirect_map(&xsks_map, index, 0);
@@ -164,6 +211,12 @@ static inline int process_tcpopt(struct xdp_md *ctx, void *nxt_ptr, struct ethhd
     nxt_ptr += opsize;
   }
 
+  hash = hash_tuples(ip6, tcp);
+  backend_len = bpf_map_lookup_elem(&backends_len, &service->id);
+  if (!backend_len)
+    return XDP_DROP;
+  if (forward(service, hash % *backend_len, eth, ip6ip6))
+    return XDP_DROP;
   return XDP_TX;
 }
 

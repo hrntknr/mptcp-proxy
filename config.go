@@ -5,10 +5,11 @@ import (
 )
 
 type Config struct {
-	Iface    string    `mapstructure:"iface"`
-	QueueID  int       `mapstructure:"queue_id"`
-	XdpProg  string    `mapstructure:"xdp_prog"`
-	Services []Service `mapstructure:"services"`
+	Iface     string    `mapstructure:"iface"`
+	QueueID   int       `mapstructure:"queue_id"`
+	XdpProg   string    `mapstructure:"xdp_prog"`
+	Services  []Service `mapstructure:"services"`
+	Memcached []string  `mapstructure:"memcached"`
 }
 
 type Service struct {
@@ -31,6 +32,7 @@ func init() {
 	viper.SetDefault("queue_id", "0")
 	viper.SetDefault("xdp_prog", "kern/mptcp_proxy_kern.o")
 	viper.SetDefault("services", []Service{})
+	viper.SetDefault("memcached", []string{"localhost:11211"})
 
 	if err := viper.ReadInConfig(); err != nil {
 		panic(err)
