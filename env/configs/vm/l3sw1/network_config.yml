@@ -34,23 +34,17 @@ ethernets:
     dhcp4: false
     accept-ra: no
     addresses:
-      - fc25::1/64
+      - fc27::1/64
     nameservers: {}
   enp7s0:
     dhcp4: false
     accept-ra: no
     addresses:
-      - fc26::1/64
+      - fc28::1/64
     nameservers: {}
   enp8s0:
     dhcp4: false
     accept-ra: no
     addresses:
-      - fc27::1/64
-    nameservers: {}
-  enp9s0:
-    dhcp4: false
-    accept-ra: no
-    addresses:
-      - fc28::1/64
+      - fc29::1/64
     nameservers: {}

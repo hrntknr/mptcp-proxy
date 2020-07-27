@@ -1,4 +1,4 @@
-iface: enp3s0
+iface: ens1f0
 queue_id: 0
 services:
   - port: 80
