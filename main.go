@@ -36,27 +36,6 @@ func startProxy() error {
 		return err
 	}
 
-	spec.Maps["services"] = &ebpf.MapSpec{
-		Type:       ebpf.Hash,
-		KeySize:    18,
-		ValueSize:  20,
-		MaxEntries: SERVICE_MAP_SIZE,
-	}
-
-	spec.Maps["backends"] = &ebpf.MapSpec{
-		Type:       ebpf.Array,
-		KeySize:    4,
-		ValueSize:  16,
-		MaxEntries: BACKEND_ARRAY_SIZE * SERVICE_MAP_SIZE,
-	}
-
-	spec.Maps["xsks_map"] = &ebpf.MapSpec{
-		Type:       ebpf.XSKMap,
-		KeySize:    4,
-		ValueSize:  4,
-		MaxEntries: 64,
-	}
-
 	coll, err := ebpf.NewCollection(spec)
 	if err != nil {
 		return err
