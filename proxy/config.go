@@ -30,7 +30,7 @@ func init() {
 
 	viper.SetDefault("iface", "eth0")
 	viper.SetDefault("queue_id", "0")
-	viper.SetDefault("xdp_prog", "kern/mptcp_proxy_kern.o")
+	viper.SetDefault("xdp_prog", "./mptcp_proxy_kern.o")
 	viper.SetDefault("services", []Service{})
 	viper.SetDefault("memcached", []string{"localhost:11211"})
 

@@ -4,7 +4,7 @@ LLC ?= llc
 CLANG ?= clang
 CC ?= gcc
 
-LIBBPF_DIR = ./libbpf/src/
+LIBBPF_DIR = ../libbpf/src/
 
 KERN_C = ${TARGET:=_kern.c}
 KERN_OBJ = ${KERN_C:.c=.o}
