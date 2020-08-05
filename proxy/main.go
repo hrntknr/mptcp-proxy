@@ -12,6 +12,7 @@ import (
 	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/perf"
+	"github.com/hrntknr/mptcp-proxy/lib"
 	log "github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
@@ -21,7 +22,6 @@ const BACKEND_ARRAY_SIZE = 64
 
 func main() {
 	if err := startProxy(); err != nil {
-		fmt.Println(err)
 		log.Fatal(err)
 	}
 }
@@ -98,11 +98,11 @@ func startProxy() error {
 	}()
 
 	for i, serviceConf := range config.Services {
-		serviceKey := &ServiceKey{
+		serviceKey := &lib.ServiceKey{
 			VIP:  net.ParseIP(serviceConf.VIP),
 			Port: serviceConf.Port,
 		}
-		serviceInfo := &ServiceInfo{
+		serviceInfo := &lib.ServiceInfo{
 			ID:  uint32(i),
 			Src: net.ParseIP(serviceConf.Src),
 		}
@@ -111,7 +111,7 @@ func startProxy() error {
 		}
 
 		for j, backendConf := range serviceConf.Backends {
-			backendInfo := &BackendInfo{
+			backendInfo := &lib.BackendInfo{
 				Dst: net.ParseIP(backendConf),
 			}
 			if err := backends.Put(uint32(BACKEND_ARRAY_SIZE*i+j), backendInfo); err != nil {

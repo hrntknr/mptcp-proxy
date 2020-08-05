@@ -22,6 +22,17 @@ exit
 exit
 write memory
 EOS
+
+mkdir -p /home/ubuntu/go/src/github.com/hrntknr/mptcp-proxy
+chown -R ubuntu:ubuntu /home/ubuntu/go/
+echo "mptcp_proxy /home/ubuntu/go/src/github.com/hrntknr/mptcp-proxy 9p trans=virtio,version=9p2000.L,nobootwait,rw,_netdev 0 0" >>/etc/fstab
+mount -a
+
+TMP=$(mktemp)
+wget -q https://golang.org/dl/go1.14.4.linux-amd64.tar.gz -O $TMP
+tar -C /usr/local -xzf $TMP
+ln -s /usr/local/go/bin/* /usr/local/bin
+
 KERNEL_PATTERN="menuentry '(Ubuntu, with Linux [0-9]+.[0-9]+.[0-9]+.mptcp)'"
 KERNEL_NAME=$(cat /boot/grub/grub.cfg | grep -E "$KERNEL_PATTERN" | sed -r "s/^.*$KERNEL_PATTERN.*$/\1/")
 sed -i "s/GRUB_DEFAULT=0/GRUB_DEFAULT=\"$KERNEL_NAME\"/g" /etc/default/grub

@@ -1,0 +1,3 @@
+iface: enp3s0
+memcached:
+  - '[fc29::2]:11211'

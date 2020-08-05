@@ -1,4 +1,4 @@
-TARGET := mptcp_proxy
+TARGET := mptcp_server
 
 LLC ?= llc
 CLANG ?= clang
