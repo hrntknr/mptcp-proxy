@@ -1,3 +1,5 @@
 iface: enp3s0
+backend_index: 1
+bpf_filter: tcp and port 80
 memcached:
   - '[fc29::2]:11211'

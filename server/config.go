@@ -5,9 +5,10 @@ import (
 )
 
 type Config struct {
-	Iface     string   `mapstructure:"iface"`
-	XdpProg   string   `mapstructure:"xdp_prog"`
-	Memcached []string `mapstructure:"memcached"`
+	Iface        string   `mapstructure:"iface"`
+	BackendIndex int      `mapstructure:"backend_index"`
+	BPFFilter    string   `mapstructure:"bpf_filter"`
+	Memcached    []string `mapstructure:"memcached"`
 }
 
 var config Config

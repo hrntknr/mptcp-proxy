@@ -1,88 +1,91 @@
 package main
 
 import (
+	"bytes"
 	"encoding/binary"
-	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 
 	"github.com/bradfitz/gomemcache/memcache"
-	"github.com/cilium/ebpf"
-	"github.com/cilium/ebpf/perf"
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcap"
 	log "github.com/sirupsen/logrus"
-	"github.com/vishvananda/netlink"
 )
 
+const TCPOPT_EOL = 0
+const TCPOPT_MPTCP = 30
+
+const MPTCP_SUB_CAPABLE = 0
+
+const MPTCP_SUB_LEN_CAPABLE_SYN = 12
+const MPTCP_SUB_LEN_CAPABLE_ACK = 20
+
 func main() {
-	if err := startProxy(); err != nil {
+	if err := startServer(); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func startProxy() error {
+func startServer() error {
 	log.Info("Starting mptcp-server ...")
 
 	mc := memcache.New(config.Memcached...)
 
-	link, err := netlink.LinkByName(config.Iface)
+	iface, err := net.InterfaceByName(config.Iface)
 	if err != nil {
 		return err
 	}
 
-	spec, err := ebpf.LoadCollectionSpec(config.XdpProg)
+	handle, err := pcap.OpenLive(iface.Name, 0xffff, false, pcap.BlockForever)
 	if err != nil {
 		return err
 	}
 
-	coll, err := ebpf.NewCollection(spec)
-	if err != nil {
-		return err
-	}
-
-	mptcpServer := coll.Programs["mptcp_server"]
-	if mptcpServer == nil {
-		return fmt.Errorf("eBPF prog 'mptcp_server' not found")
-	}
-
-	newSession := coll.Maps["new_session"]
-	if newSession == nil {
-		return fmt.Errorf("eBPF map 'new_session' not found")
-	}
-	reader, err := perf.NewReader(newSession, os.Getpagesize())
-	if err != nil {
+	if err = handle.SetBPFFilter(config.BPFFilter); err != nil {
 		return err
 	}
 
 	go func() {
-		for {
-			record, err := reader.Read()
-			if err != nil {
-				log.Error(err)
-				continue
+		packetSource := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+		for packet := range packetSource.Packets() {
+			ethLayer, ok := packet.Layer(layers.LayerTypeEthernet).(*layers.Ethernet)
+			if !ok {
+				return
 			}
-			senderKey := binary.LittleEndian.Uint64(record.RawSample[:8])
-			backendIndex := binary.LittleEndian.Uint32(record.RawSample[8:12])
-			log.Debugf("new session!! key: %d, backend: %d", senderKey, backendIndex)
-			mc.Set(&memcache.Item{
-				Key:   strconv.FormatUint(senderKey, 10),
-				Value: []byte(strconv.FormatUint(uint64(backendIndex), 10)),
-			})
+			if !bytes.Equal(ethLayer.SrcMAC, iface.HardwareAddr) {
+				return
+			}
+			tcpLayer, ok := packet.Layer(layers.LayerTypeTCP).(*layers.TCP)
+			if !ok {
+				return
+			}
+			for _, opt := range tcpLayer.Options {
+				switch opt.OptionType {
+				case TCPOPT_EOL:
+					break
+				case TCPOPT_MPTCP:
+					subType := opt.OptionData[0] >> 4
+					switch subType {
+					case MPTCP_SUB_CAPABLE:
+						senderKey := binary.BigEndian.Uint64(opt.OptionData[2:])
+						if err := mc.Set(&memcache.Item{
+							Key:   strconv.FormatUint(senderKey, 10),
+							Value: []byte(strconv.FormatUint(uint64(config.BackendIndex), 10)),
+						}); err != nil {
+							log.Warn(err)
+						}
+					}
+				}
+			}
 		}
+
 	}()
 
-	if err := netlink.LinkSetXdpFd(link, mptcpServer.FD()); err != nil {
-		return err
-	}
-
-	defer (func() {
-		if err := netlink.LinkSetXdpFd(link, -1); err != nil {
-			fmt.Println(err.Error())
-		}
-	})()
-
-	log.Infof("Running mptcp-proxy on %s", config.Iface)
+	log.Infof("Running mptcp-proxy on %s", iface.Name)
 
 	quit := make(chan os.Signal)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
