@@ -72,6 +72,7 @@ func startServer() error {
 					switch subType {
 					case MPTCP_SUB_CAPABLE:
 						senderKey := binary.BigEndian.Uint64(opt.OptionData[2:])
+						log.Debugf("new sender key: %d", senderKey)
 						if err := mc.Set(&memcache.Item{
 							Key:   strconv.FormatUint(senderKey, 10),
 							Value: []byte(strconv.FormatUint(uint64(config.BackendIndex), 10)),

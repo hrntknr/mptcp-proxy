@@ -4,7 +4,7 @@ LLC ?= llc
 CLANG ?= clang
 CC ?= gcc
 
-LIBBPF_DIR = ../libbpf/src/
+LIBBPF_DIR = ./libbpf/src/
 
 KERN_C = ${TARGET:=_kern.c}
 KERN_OBJ = ${KERN_C:.c=.o}
@@ -15,7 +15,7 @@ USER_OBJ = ${USER_C:.c=.o}
 OBJECT_LIBBPF = $(LIBBPF_DIR)/libbpf.a
 
 CFLAGS ?= -I$(LIBBPF_DIR)
-CFLAGS += -I../lib
+CFLAGS += -I./lib
 LDFLAGS ?= -L$(LIBBPF_DIR)
 
 USER_CFLAGS ?= $(CFLAGS)

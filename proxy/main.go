@@ -1,18 +1,13 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
 	"net"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
-	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/cilium/ebpf"
-	"github.com/cilium/ebpf/perf"
-	"github.com/hrntknr/mptcp-proxy/lib"
 	log "github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
@@ -29,7 +24,7 @@ func main() {
 func startProxy() error {
 	log.Info("Starting mptcp-proxy ...")
 
-	mc := memcache.New(config.Memcached...)
+	// mc := memcache.New(config.Memcached...)
 
 	link, err := netlink.LinkByName(config.Iface)
 	if err != nil {
@@ -71,38 +66,12 @@ func startProxy() error {
 		return fmt.Errorf("eBPF map 'xsks_map' not found")
 	}
 
-	newClientMap := coll.Maps["new_client"]
-	if newClientMap == nil {
-		return fmt.Errorf("eBPF map 'new_client' not found")
-	}
-	reader, err := perf.NewReader(newClientMap, os.Getpagesize())
-	if err != nil {
-		return err
-	}
-
-	go func() {
-		for {
-			record, err := reader.Read()
-			if err != nil {
-				log.Error(err)
-				continue
-			}
-			senderKey := binary.LittleEndian.Uint64(record.RawSample[:8])
-			backendIndex := binary.LittleEndian.Uint32(record.RawSample[8:12])
-			log.Debugf("new session!! key: %d, backend: %d", senderKey, backendIndex)
-			mc.Set(&memcache.Item{
-				Key:   strconv.FormatUint(senderKey, 10),
-				Value: []byte(strconv.FormatUint(uint64(backendIndex), 10)),
-			})
-		}
-	}()
-
 	for i, serviceConf := range config.Services {
-		serviceKey := &lib.ServiceKey{
+		serviceKey := &ServiceKey{
 			VIP:  net.ParseIP(serviceConf.VIP),
 			Port: serviceConf.Port,
 		}
-		serviceInfo := &lib.ServiceInfo{
+		serviceInfo := &ServiceInfo{
 			ID:  uint32(i),
 			Src: net.ParseIP(serviceConf.Src),
 		}
@@ -111,7 +80,7 @@ func startProxy() error {
 		}
 
 		for j, backendConf := range serviceConf.Backends {
-			backendInfo := &lib.BackendInfo{
+			backendInfo := &BackendInfo{
 				Dst: net.ParseIP(backendConf),
 			}
 			if err := backends.Put(uint32(BACKEND_ARRAY_SIZE*i+j), backendInfo); err != nil {
