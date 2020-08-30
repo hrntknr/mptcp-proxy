@@ -8,7 +8,7 @@
 use afxdp::buf::Buf;
 use afxdp::mmaparea::{MmapArea, MmapAreaOptions};
 use afxdp::socket::{Socket, SocketRx, SocketTx};
-use afxdp::umem::{Umem, UmemCompletionQueue, UmemFillQueue};
+use afxdp::umem::Umem;
 use afxdp::PENDING_LEN;
 use arraydeque::{ArrayDeque, Wrapping};
 use libbpf_sys::{
@@ -40,22 +40,6 @@ pub struct RawSocketTx<'a, T: std::default::Default + std::marker::Copy> {
     socket: Arc<Socket<'a, T>>,
     fd: std::os::raw::c_int,
     tx: Box<xsk_ring_prod>,
-}
-
-struct State<'a> {
-    cq: UmemCompletionQueue<'a, BufCustom>,
-    fq: UmemFillQueue<'a, BufCustom>,
-    rx: SocketRx<'a, BufCustom>,
-    tx: SocketTx<'a, BufCustom>,
-    fq_deficit: usize,
-}
-
-#[derive(Default, Debug, Clone, Copy)]
-struct Stats {
-    cq_bufs: usize,
-    fq_bufs: usize,
-    rx_packets: usize,
-    tx_packets: usize,
 }
 
 #[derive(Default, Copy, Clone)]
@@ -92,7 +76,7 @@ fn main() {
         XSK_RING_CONS__DEFAULT_NUM_DESCS,
         XSK_RING_PROD__DEFAULT_NUM_DESCS,
     );
-    let (umem1, umem1cq, mut umem1fq) = match r {
+    let (umem1, mut umem1cq, mut umem1fq) = match r {
         Ok(umem) => umem,
         Err(err) => panic!("no umem for you: {:?}", err),
     };
@@ -168,14 +152,14 @@ fn main() {
             socket: { Box::from_raw(*xsk_ptr) },
         })
     });
-    let skt1rx = unsafe {
+    let mut skt1rx = unsafe {
         std::mem::transmute::<RawSocketRx<BufCustom>, SocketRx<BufCustom>>(RawSocketRx {
             socket: arc.clone(),
             fd: { xsk_socket__fd(*xsk_ptr) },
             rx: rx,
         })
     };
-    let skt1tx = unsafe {
+    let mut skt1tx = unsafe {
         std::mem::transmute::<RawSocketTx<BufCustom>, SocketTx<BufCustom>>(RawSocketTx {
             socket: arc.clone(),
             fd: { xsk_socket__fd(*xsk_ptr) },
@@ -214,26 +198,18 @@ fn main() {
 
     let mut v: ArrayDeque<[Buf<BufCustom>; PENDING_LEN], Wrapping> = ArrayDeque::new();
 
-    let mut state = State {
-        cq: umem1cq,
-        fq: umem1fq,
-        rx: skt1rx,
-        tx: skt1tx,
-        fq_deficit: 0,
-    };
-
     let custom = BufCustom {};
-
+    let mut fq_deficit = 0;
     loop {
         // Service completion queue
-        let r = state.cq.service(&mut bufs, BATCH_SIZE);
+        let r = umem1cq.service(&mut bufs, BATCH_SIZE);
         match r {
             Ok(_) => {}
             Err(err) => panic!("error: {:?}", err),
         }
 
         // Receive
-        let r = state.rx.try_recv(&mut v, BATCH_SIZE, custom);
+        let r = skt1rx.try_recv(&mut v, BATCH_SIZE, custom);
         match r {
             Ok(n) => {
                 if n > 0 {
@@ -241,10 +217,10 @@ fn main() {
                         Ok(n) => print!("Receive: {}\n", n),
                         Err(err) => println!("error: {:?}", err),
                     }
-                    state.fq_deficit += n;
+                    fq_deficit += n;
                 } else {
-                    if state.fq.needs_wakeup() {
-                        state.rx.wake();
+                    if umem1fq.needs_wakeup() {
+                        skt1rx.wake();
                     }
                 }
             }
@@ -255,7 +231,7 @@ fn main() {
 
         // Forward
         if !v.is_empty() {
-            let r = state.tx.try_send(&mut v, BATCH_SIZE);
+            let r = skt1tx.try_send(&mut v, BATCH_SIZE);
             match r {
                 Ok(n) => print!("Forward: {}\n", n),
                 Err(err) => println!("error: {:?}", err),
@@ -263,11 +239,11 @@ fn main() {
         }
 
         // Fill buffers
-        if state.fq_deficit > 0 {
-            let r = state.fq.fill(&mut bufs, state.fq_deficit);
+        if fq_deficit > 0 {
+            let r = umem1fq.fill(&mut bufs, fq_deficit);
             match r {
                 Ok(n) => {
-                    state.fq_deficit -= n;
+                    fq_deficit -= n;
                 }
                 Err(err) => panic!("error: {:?}", err),
             }
