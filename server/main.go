@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha1"
 	"encoding/binary"
 	"net"
 	"os"
@@ -71,10 +72,15 @@ func startServer() error {
 					subType := opt.OptionData[0] >> 4
 					switch subType {
 					case MPTCP_SUB_CAPABLE:
-						senderKey := binary.BigEndian.Uint64(opt.OptionData[2:])
-						log.Debugf("new sender key: %d", senderKey)
+						hash := sha1.New()
+						hash.Write([]byte(opt.OptionData[2:10]))
+						result := hash.Sum(nil)
+						token := binary.BigEndian.Uint32(result[:4])
+
+						log.Debugf("new sender token: %d", token)
+
 						if err := mc.Set(&memcache.Item{
-							Key:   strconv.FormatUint(senderKey, 10),
+							Key:   strconv.FormatUint(uint64(token), 10),
 							Value: []byte(strconv.FormatUint(uint64(config.BackendIndex), 10)),
 						}); err != nil {
 							log.Warn(err)

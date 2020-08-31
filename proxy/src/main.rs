@@ -388,7 +388,6 @@ fn parse_packet(bufs: &mut ArrayDeque<[Buf<BufCustom>; PENDING_LEN], Wrapping>) 
         }
         let packet_tcp = TcpPacket::new(packet_ip6.payload()).unwrap();
         for opt in packet_tcp.get_options_iter() {
-            print!("{:?}\n", opt.get_number());
             match opt.get_number() {
                 TcpOptionNumber(0) => {
                     return;
