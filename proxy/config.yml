@@ -1,0 +1,12 @@
+iface: ens1f0
+queue_id: 0
+xdp_prog: mptcp_proxy_kern.o
+services:
+  - port: 80
+    vip: fc10::1
+    backends:
+      - fc27::2
+      - fc28::2
+    src: fc13::1
+memcached:
+  - localhost:11211

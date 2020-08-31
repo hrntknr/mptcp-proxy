@@ -32,8 +32,8 @@
 
 struct service_key
 {
-  __u8 vip[16];
   __u16 port;
+  __u8 vip[16];
 };
 
 struct service_info
@@ -195,9 +195,6 @@ static inline int process_tcphdr(struct xdp_md *ctx, void *nxt_ptr, struct ethhd
 
   assert_len(tcp, data_end);
 
-  // __u32 index = ctx->rx_queue_index;
-  // if (bpf_map_lookup_elem(&xsks_map, &index))
-  //   return bpf_redirect_map(&xsks_map, index, 0);
   return process_tcpopt(ctx, tcp + 1, eth, ip6ip6, ip6, tcp);
 }
 
