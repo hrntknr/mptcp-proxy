@@ -1,5 +1,6 @@
 iface: ens1f0
 queue_id: 0
+xdp_prog: mptcp_proxy_kern.o
 services:
   - port: 80
     vip: fc10::1

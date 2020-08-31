@@ -170,12 +170,8 @@ static inline int process_tcpopt(struct xdp_md *ctx, void *nxt_ptr, struct ethhd
       switch (subtype)
       {
       case MPTCP_SUB_JOIN:
-        bpf_printk("index: %u\n", index);
         if (bpf_map_lookup_elem(&xsks_map, &index))
-        {
-          bpf_printk("result: ok\n");
           return bpf_redirect_map(&xsks_map, index, 0);
-        }
         return XDP_DROP;
       }
     }
