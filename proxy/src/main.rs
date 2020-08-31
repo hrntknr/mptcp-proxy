@@ -14,9 +14,15 @@ use libbpf_sys::{
 };
 use libc::c_int;
 use pnet::datalink::interfaces;
+use pnet::packet::ethernet::{EtherTypes, MutableEthernetPacket};
+use pnet::packet::ip::IpNextHeaderProtocol;
+use pnet::packet::ipv6::{Ipv6Packet, MutableIpv6Packet};
+use pnet::packet::tcp::{TcpOptionNumber, TcpPacket};
+use pnet::packet::{MutablePacket, Packet};
 use rlimit::{setrlimit, Resource, RLIM_INFINITY};
 use serde::{Deserialize, Serialize};
 use std::cmp::min;
+use std::convert::TryInto;
 use std::ffi::{c_void, CString};
 use std::net::Ipv6Addr;
 use std::sync::Arc;
@@ -368,6 +374,42 @@ fn start_proxy(cfg: AppConfig) {
 
 fn parse_packet(bufs: &mut ArrayDeque<[Buf<BufCustom>; PENDING_LEN], Wrapping>) {
     for buf in bufs {
-        print!("{:?}\n", buf.data);
+        let mut packet_eth = MutableEthernetPacket::new(&mut buf.data).unwrap();
+        if packet_eth.get_ethertype() != EtherTypes::Ipv6 {
+            return;
+        }
+        let mut packet_ip6ip6 = MutableIpv6Packet::new(packet_eth.payload_mut()).unwrap();
+        if packet_ip6ip6.get_next_header() != IpNextHeaderProtocol(41) {
+            return;
+        }
+        let packet_ip6 = Ipv6Packet::new(packet_ip6ip6.payload()).unwrap();
+        if packet_ip6.get_next_header() != IpNextHeaderProtocol(6) {
+            return;
+        }
+        let packet_tcp = TcpPacket::new(packet_ip6.payload()).unwrap();
+        for opt in packet_tcp.get_options_iter() {
+            print!("{:?}\n", opt.get_number());
+            match opt.get_number() {
+                TcpOptionNumber(0) => {
+                    return;
+                }
+                TcpOptionNumber(30) => {
+                    let opt_payload = opt.payload();
+                    match opt_payload[0] >> 4 {
+                        1 => {
+                            if opt_payload.len() != 10 {
+                                return;
+                            }
+                            let token: [u8; 4] = opt_payload[2..6].try_into().unwrap();
+                            let token =
+                                unsafe { std::mem::transmute::<[u8; 4], u32>(token) }.to_be();
+                            print!("mp_join: {:?}\n", token);
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
     }
 }
