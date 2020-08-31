@@ -32,8 +32,8 @@
 
 struct service_key
 {
-  __u16 port;
   __u8 vip[16];
+  __u16 port;
 };
 
 struct service_info

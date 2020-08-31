@@ -31,18 +31,21 @@ struct ServiceConfig {
 }
 
 #[allow(dead_code)]
+#[repr(C)]
 struct ServiceKey {
-    port: u16,
     vip: [u8; 16],
+    port: u16,
 }
 
 #[allow(dead_code)]
+#[repr(C)]
 struct ServiceInfo {
     id: u32,
     src: [u8; 16],
 }
 
 #[allow(dead_code)]
+#[repr(C)]
 struct BackendInfo {
     dst: [u8; 16],
 }
