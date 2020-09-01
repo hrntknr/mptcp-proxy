@@ -8,5 +8,6 @@ services:
       - fc27::2
       - fc28::2
     src: fc13::1
-memcached:
-  - localhost:11211
+redis: redis://localhost:6379
+retry: 3
+retry_wait: 10

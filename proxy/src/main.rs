@@ -4,6 +4,7 @@ use afxdp::socket::{Socket, SocketRx, SocketTx};
 use afxdp::umem::Umem;
 use afxdp::PENDING_LEN;
 use arraydeque::{ArrayDeque, Wrapping};
+use async_std::task;
 use config::{Config, Environment, File};
 use libbpf_sys::{
     bpf_map__fd, bpf_map_update_elem, bpf_object, bpf_object__find_map_by_name, bpf_prog_load,
@@ -19,13 +20,18 @@ use pnet::packet::ip::IpNextHeaderProtocol;
 use pnet::packet::ipv6::{Ipv6Packet, MutableIpv6Packet};
 use pnet::packet::tcp::{TcpOptionNumber, TcpPacket};
 use pnet::packet::{MutablePacket, Packet};
+use redis::aio::MultiplexedConnection;
+use redis::RedisError;
 use rlimit::{setrlimit, Resource, RLIM_INFINITY};
 use serde::{Deserialize, Serialize};
+use serde_json::from_str;
 use std::cmp::min;
 use std::convert::TryInto;
 use std::ffi::{c_void, CString};
 use std::net::Ipv6Addr;
+use std::sync::mpsc;
 use std::sync::Arc;
+use std::time::Duration;
 
 const BACKEND_ARRAY_SIZE: usize = 64;
 
@@ -43,7 +49,19 @@ struct AppConfig {
     queue_id: isize,
     xdp_prog: String,
     services: Vec<ServiceConfig>,
-    memcached: Vec<String>,
+    redis: String,
+    retry: usize,
+    retry_wait: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SessionInfoString {
+    dst: String,
+    src: String,
+}
+struct SessionInfo {
+    dst: Ipv6Addr,
+    src: Ipv6Addr,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -105,10 +123,10 @@ fn main() {
 
     let cfg = settings.try_into::<AppConfig>().unwrap();
 
-    start_proxy(cfg)
+    task::block_on(start_proxy(cfg))
 }
 
-fn start_proxy(cfg: AppConfig) {
+async fn start_proxy(cfg: AppConfig) {
     assert!(setrlimit(Resource::MEMLOCK, RLIM_INFINITY, RLIM_INFINITY).is_ok());
 
     let ifaces = interfaces();
@@ -117,6 +135,8 @@ fn start_proxy(cfg: AppConfig) {
         Some(iface) => iface,
         None => panic!("not found interface: {}", cfg.iface),
     };
+
+    let client = redis::Client::open(cfg.redis).unwrap();
 
     let mut obj: *mut bpf_object = std::ptr::null_mut();
     let obj_ptr: *mut *mut bpf_object = &mut obj;
@@ -234,7 +254,7 @@ fn start_proxy(cfg: AppConfig) {
         Err(err) => panic!("no umem for you: {:?}", err),
     };
 
-    let mut cfg = xsk_socket_config {
+    let mut xsk_cfg = xsk_socket_config {
         rx_size: XSK_RING_CONS__DEFAULT_NUM_DESCS,
         tx_size: XSK_RING_PROD__DEFAULT_NUM_DESCS,
         xdp_flags: XDP_FLAGS_UPDATE_IF_NOEXIST,
@@ -242,10 +262,10 @@ fn start_proxy(cfg: AppConfig) {
         libbpf_flags: 0,
     };
     if ZERO_COPY {
-        cfg.bind_flags = cfg.bind_flags | XDP_ZEROCOPY as u16;
+        xsk_cfg.bind_flags = xsk_cfg.bind_flags | XDP_ZEROCOPY as u16;
     }
     if COPY {
-        cfg.bind_flags = cfg.bind_flags | XDP_COPY as u16;
+        xsk_cfg.bind_flags = xsk_cfg.bind_flags | XDP_COPY as u16;
     }
 
     let mut rx: Box<xsk_ring_cons> = Default::default();
@@ -266,7 +286,7 @@ fn start_proxy(cfg: AppConfig) {
             umem.umem.lock().unwrap().as_mut(),
             rx.as_mut(),
             tx.as_mut(),
-            &cfg,
+            &xsk_cfg,
         )
     };
     if err != 0 {
@@ -324,6 +344,7 @@ fn start_proxy(cfg: AppConfig) {
 
     let custom = BufCustom {};
     let mut fq_deficit = 0;
+    let (sender, receiver) = mpsc::channel();
     loop {
         // Service completion queue
         let r = umem1cq.service(&mut bufs, BATCH_SIZE);
@@ -337,7 +358,19 @@ fn start_proxy(cfg: AppConfig) {
         match r {
             Ok(n) => {
                 if n > 0 {
-                    parse_packet(&mut v);
+                    for mut buf in v.pop_front() {
+                        let retry = cfg.retry;
+                        let retry_wait = cfg.retry_wait;
+                        let client = client.clone();
+                        let sender = sender.clone();
+                        let task = async move {
+                            let mut conn =
+                                client.get_multiplexed_async_std_connection().await.unwrap();
+                            process_eth(&mut buf.data, &mut conn, retry, retry_wait).await;
+                            sender.send(buf).unwrap();
+                        };
+                        task::spawn(task);
+                    }
                     fq_deficit += n;
                 } else {
                     if umem1fq.needs_wakeup() {
@@ -348,6 +381,10 @@ fn start_proxy(cfg: AppConfig) {
             Err(err) => {
                 panic!("error: {:?}", err);
             }
+        }
+
+        for buf in receiver.try_recv() {
+            v.push_back(buf);
         }
 
         // Forward
@@ -372,43 +409,134 @@ fn start_proxy(cfg: AppConfig) {
     }
 }
 
-fn parse_packet(bufs: &mut ArrayDeque<[Buf<BufCustom>; PENDING_LEN], Wrapping>) {
-    for buf in bufs {
-        let mut packet_eth = MutableEthernetPacket::new(&mut buf.data).unwrap();
-        if packet_eth.get_ethertype() != EtherTypes::Ipv6 {
-            return;
-        }
-        let mut packet_ip6ip6 = MutableIpv6Packet::new(packet_eth.payload_mut()).unwrap();
-        if packet_ip6ip6.get_next_header() != IpNextHeaderProtocol(41) {
-            return;
-        }
-        let packet_ip6 = Ipv6Packet::new(packet_ip6ip6.payload()).unwrap();
-        if packet_ip6.get_next_header() != IpNextHeaderProtocol(6) {
-            return;
-        }
-        let packet_tcp = TcpPacket::new(packet_ip6.payload()).unwrap();
-        for opt in packet_tcp.get_options_iter() {
-            match opt.get_number() {
-                TcpOptionNumber(0) => {
-                    return;
-                }
-                TcpOptionNumber(30) => {
-                    let opt_payload = opt.payload();
-                    match opt_payload[0] >> 4 {
-                        1 => {
-                            if opt_payload.len() != 10 {
-                                return;
-                            }
-                            let token: [u8; 4] = opt_payload[2..6].try_into().unwrap();
-                            let token =
-                                unsafe { std::mem::transmute::<[u8; 4], u32>(token) }.to_be();
-                            print!("mp_join: {:?}\n", token);
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
+async fn process_tcp(
+    buf: &[u8],
+    conn: &mut MultiplexedConnection,
+    retry: usize,
+    retry_wait: usize,
+) -> Option<SessionInfo> {
+    let packet_tcp = TcpPacket::new(buf).unwrap();
+    for opt in packet_tcp.get_options_iter() {
+        match opt.get_number() {
+            TcpOptionNumber(0) => {
+                return None;
             }
+            TcpOptionNumber(30) => {
+                let opt_payload = opt.payload();
+                match opt_payload[0] >> 4 {
+                    1 => {
+                        if opt_payload.len() != 10 {
+                            continue;
+                        }
+                        let token: [u8; 4] = opt_payload[2..6].try_into().unwrap();
+                        let token = unsafe { std::mem::transmute::<[u8; 4], u32>(token) }
+                            .to_be()
+                            .to_string();
+                        println!("mp_join: {:?}", token);
+                        let mut retry = retry;
+                        let info = loop {
+                            task::sleep(Duration::from_millis(retry_wait as u64)).await;
+                            let r: Result<String, RedisError> =
+                                redis::cmd("GET").arg(&token).query_async(conn).await;
+                            match r {
+                                Ok(r) => break Some(r),
+                                Err(_) => {
+                                    if retry <= 0 {
+                                        break None;
+                                    }
+                                    retry -= 1;
+                                }
+                            };
+                        };
+                        let info = match info {
+                            Some(s) => s,
+                            None => {
+                                println!("error: token not found.");
+                                continue;
+                            }
+                        };
+                        let info: SessionInfoString = match from_str(&info) {
+                            Ok(info) => info,
+                            Err(err) => {
+                                println!("error: {:?}", err);
+                                continue;
+                            }
+                        };
+                        let src: Ipv6Addr = match info.src.parse() {
+                            Ok(info) => info,
+                            Err(err) => {
+                                println!("error: {:?}", err);
+                                continue;
+                            }
+                        };
+                        let dst: Ipv6Addr = match info.dst.parse() {
+                            Ok(info) => info,
+                            Err(err) => {
+                                println!("error: {:?}", err);
+                                continue;
+                            }
+                        };
+                        return Some(SessionInfo { src: src, dst: dst });
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
         }
     }
+    None
+}
+
+async fn process_ip6(
+    buf: &[u8],
+    conn: &mut MultiplexedConnection,
+    retry: usize,
+    retry_wait: usize,
+) -> Option<SessionInfo> {
+    let packet_ip6 = Ipv6Packet::new(buf).unwrap();
+    if packet_ip6.get_next_header() != IpNextHeaderProtocol(6) {
+        return None;
+    }
+    process_tcp(packet_ip6.payload(), conn, retry, retry_wait).await
+}
+
+async fn process_ip6ip6(
+    buf: &mut [u8],
+    conn: &mut MultiplexedConnection,
+    retry: usize,
+    retry_wait: usize,
+) -> bool {
+    let mut packet_ip6ip6 = MutableIpv6Packet::new(buf).unwrap();
+    if packet_ip6ip6.get_next_header() != IpNextHeaderProtocol(41) {
+        return false;
+    }
+    let packet_ip6 = Ipv6Packet::new(packet_ip6ip6.payload()).unwrap();
+    if packet_ip6.get_next_header() != IpNextHeaderProtocol(6) {
+        return false;
+    }
+    let info = match process_ip6(packet_ip6ip6.payload(), conn, retry, retry_wait).await {
+        None => return false,
+        Some(info) => info,
+    };
+    packet_ip6ip6.set_source(info.src);
+    packet_ip6ip6.set_destination(info.dst);
+    true
+}
+
+async fn process_eth(
+    buf: &mut [u8],
+    conn: &mut MultiplexedConnection,
+    retry: usize,
+    retry_wait: usize,
+) {
+    let mut packet_eth = MutableEthernetPacket::new(buf).unwrap();
+    if packet_eth.get_ethertype() != EtherTypes::Ipv6 {
+        return;
+    }
+    if process_ip6ip6(packet_eth.payload_mut(), conn, retry, retry_wait).await {
+        let src = packet_eth.get_source();
+        let dst = packet_eth.get_destination();
+        packet_eth.set_source(dst);
+        packet_eth.set_destination(src);
+    };
 }

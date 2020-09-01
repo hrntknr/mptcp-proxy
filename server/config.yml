@@ -1,5 +1,6 @@
 iface: enp3s0
-backend_index: 1
+dst: fc27::2
+src: fc13::1
 bpf_filter: tcp and port 80
-memcached:
-  - '[fc29::2]:11211'
+redis: '[fc29::2]:6379'
+join_timeout: 10s

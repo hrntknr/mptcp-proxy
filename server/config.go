@@ -5,10 +5,12 @@ import (
 )
 
 type Config struct {
-	Iface        string   `mapstructure:"iface"`
-	BackendIndex int      `mapstructure:"backend_index"`
-	BPFFilter    string   `mapstructure:"bpf_filter"`
-	Memcached    []string `mapstructure:"memcached"`
+	Iface       string `mapstructure:"iface"`
+	Dst         string `mapstructure:"dst"`
+	Src         string `mapstructure:"src"`
+	BPFFilter   string `mapstructure:"bpf_filter"`
+	Redus       string `mapstructure:"redis"`
+	JoinTimeout string `mapstructure:"join_timeout"`
 }
 
 var config Config
@@ -22,7 +24,8 @@ func init() {
 
 	viper.SetDefault("iface", "eth0")
 	viper.SetDefault("xdp_prog", "./mptcp_server_kern.o")
-	viper.SetDefault("memcached", []string{"localhost:11211"})
+	viper.SetDefault("redis", "localhost:6379")
+	viper.SetDefault("join_timeout", "10s")
 
 	if err := viper.ReadInConfig(); err != nil {
 		panic(err)
