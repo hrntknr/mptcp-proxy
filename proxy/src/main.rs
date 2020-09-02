@@ -62,6 +62,14 @@ struct SessionInfoString {
 struct SessionInfo {
     dst: Ipv6Addr,
     src: Ipv6Addr,
+    flow: Flow,
+}
+
+struct Flow {
+    s_addr: Option<Ipv6Addr>,
+    s_port: u16,
+    d_addr: Option<Ipv6Addr>,
+    d_port: u16,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -89,6 +97,22 @@ struct ServiceInfo {
 #[allow(dead_code)]
 #[repr(C)]
 struct BackendInfo {
+    dst: [u8; 16],
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+struct SubflowCacheKey {
+    s_addr: [u8; 16],
+    s_port: u16,
+    d_addr: [u8; 16],
+    d_port: u16,
+}
+
+#[allow(dead_code)]
+#[repr(C)]
+struct SubflowCacheInfo {
+    src: [u8; 16],
     dst: [u8; 16],
 }
 
@@ -163,6 +187,10 @@ async fn start_proxy(cfg: AppConfig) {
         bpf_object__find_map_by_name(obj, CString::new("backends_len").unwrap().as_ptr())
     };
     let backends_len_fd = unsafe { bpf_map__fd(backends_len) };
+    let subflow_cache = unsafe {
+        bpf_object__find_map_by_name(obj, CString::new("subflow_cache").unwrap().as_ptr())
+    };
+    let subflow_cache_fd = unsafe { bpf_map__fd(subflow_cache) };
 
     for (i, service) in cfg.services.iter().enumerate() {
         let service_key = ServiceKey {
@@ -366,7 +394,40 @@ async fn start_proxy(cfg: AppConfig) {
                         let task = async move {
                             let mut conn =
                                 client.get_multiplexed_async_std_connection().await.unwrap();
-                            process_eth(&mut buf.data, &mut conn, retry, retry_wait).await;
+                            let info =
+                                process_eth(&mut buf.data, &mut conn, retry, retry_wait).await;
+                            match info {
+                                Some(info) => {
+                                    let cache_key = SubflowCacheKey {
+                                        s_addr: info.flow.s_addr.unwrap().octets(),
+                                        s_port: info.flow.s_port,
+                                        d_addr: info.flow.d_addr.unwrap().octets(),
+                                        d_port: info.flow.d_port,
+                                    };
+                                    let cache_key_ptr =
+                                        &cache_key as *const SubflowCacheKey as *const c_void;
+                                    let cache_value = SubflowCacheInfo {
+                                        src: info.src.octets(),
+                                        dst: info.dst.octets(),
+                                    };
+                                    let cache_value_ptr =
+                                        &cache_value as *const SubflowCacheInfo as *const c_void;
+
+                                    let err = unsafe {
+                                        bpf_map_update_elem(
+                                            subflow_cache_fd,
+                                            cache_key_ptr,
+                                            cache_value_ptr,
+                                            BPF_ANY as u64,
+                                        )
+                                    };
+                                    if err != 0 {
+                                        panic!("bpf_map_update_elem failed")
+                                    }
+                                }
+                                None => {}
+                            }
+
                             sender.send(buf).unwrap();
                         };
                         task::spawn(task);
@@ -476,7 +537,16 @@ async fn process_tcp(
                                 continue;
                             }
                         };
-                        return Some(SessionInfo { src: src, dst: dst });
+                        return Some(SessionInfo {
+                            src: src,
+                            dst: dst,
+                            flow: Flow {
+                                s_addr: None,
+                                s_port: packet_tcp.get_source(),
+                                d_addr: None,
+                                d_port: packet_tcp.get_destination(),
+                            },
+                        });
                     }
                     _ => {}
                 }
@@ -497,7 +567,13 @@ async fn process_ip6(
     if packet_ip6.get_next_header() != IpNextHeaderProtocol(6) {
         return None;
     }
-    process_tcp(packet_ip6.payload(), conn, retry, retry_wait).await
+    let mut info = match process_tcp(packet_ip6.payload(), conn, retry, retry_wait).await {
+        Some(info) => info,
+        None => return None,
+    };
+    info.flow.s_addr = Some(packet_ip6.get_source());
+    info.flow.d_addr = Some(packet_ip6.get_destination());
+    Some(info)
 }
 
 async fn process_ip6ip6(
@@ -505,22 +581,22 @@ async fn process_ip6ip6(
     conn: &mut MultiplexedConnection,
     retry: usize,
     retry_wait: usize,
-) -> bool {
+) -> Option<SessionInfo> {
     let mut packet_ip6ip6 = MutableIpv6Packet::new(buf).unwrap();
     if packet_ip6ip6.get_next_header() != IpNextHeaderProtocol(41) {
-        return false;
+        return None;
     }
     let packet_ip6 = Ipv6Packet::new(packet_ip6ip6.payload()).unwrap();
     if packet_ip6.get_next_header() != IpNextHeaderProtocol(6) {
-        return false;
+        return None;
     }
     let info = match process_ip6(packet_ip6ip6.payload(), conn, retry, retry_wait).await {
-        None => return false,
+        None => return None,
         Some(info) => info,
     };
     packet_ip6ip6.set_source(info.src);
     packet_ip6ip6.set_destination(info.dst);
-    true
+    Some(info)
 }
 
 async fn process_eth(
@@ -528,15 +604,18 @@ async fn process_eth(
     conn: &mut MultiplexedConnection,
     retry: usize,
     retry_wait: usize,
-) {
+) -> Option<SessionInfo> {
     let mut packet_eth = MutableEthernetPacket::new(buf).unwrap();
     if packet_eth.get_ethertype() != EtherTypes::Ipv6 {
-        return;
+        return None;
     }
-    if process_ip6ip6(packet_eth.payload_mut(), conn, retry, retry_wait).await {
-        let src = packet_eth.get_source();
-        let dst = packet_eth.get_destination();
-        packet_eth.set_source(dst);
-        packet_eth.set_destination(src);
+    let info = match process_ip6ip6(packet_eth.payload_mut(), conn, retry, retry_wait).await {
+        None => return None,
+        Some(info) => info,
     };
+    let src = packet_eth.get_source();
+    let dst = packet_eth.get_destination();
+    packet_eth.set_source(dst);
+    packet_eth.set_destination(src);
+    Some(info)
 }

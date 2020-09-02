@@ -12,6 +12,7 @@
 
 #define SERVICE_MAP_SIZE 64
 #define BACKEND_ARRAY_SIZE 64
+#define SUBFLOW_CACHE_SIZE 4096
 
 #define MAX_TCPOPT_LEN 16
 #define PERF_SIZE 1
@@ -47,6 +48,20 @@ struct backend_info
   __u8 dst[16];
 };
 
+struct subflow_cache_key
+{
+  __u8 s_addr[16];
+  __u16 s_port;
+  __u8 d_addr[16];
+  __u16 d_port;
+};
+
+struct subflow_cache_info
+{
+  __u8 src[16];
+  __u8 dst[16];
+};
+
 struct bpf_map_def SEC("maps") services = {
     .type = BPF_MAP_TYPE_HASH,
     .key_size = sizeof(struct service_key),
@@ -73,6 +88,13 @@ struct bpf_map_def SEC("maps") xsks_map = {
     .key_size = sizeof(__u32),
     .value_size = sizeof(__u32),
     .max_entries = 64,
+};
+
+struct bpf_map_def SEC("maps") subflow_cache = {
+    .type = BPF_MAP_TYPE_LRU_HASH,
+    .key_size = sizeof(struct subflow_cache_key),
+    .value_size = sizeof(struct subflow_cache_info),
+    .max_entries = SUBFLOW_CACHE_SIZE,
 };
 
 static inline int swap_mac(struct ethhdr *eth)
@@ -192,8 +214,25 @@ static inline int process_tcphdr(struct xdp_md *ctx, void *nxt_ptr, struct ethhd
 {
   void *data_end = (void *)(long)ctx->data_end;
   struct tcphdr *tcp = (struct tcphdr *)nxt_ptr;
+  struct subflow_cache_key cache_key = {};
+  struct subflow_cache_info *cache;
 
   assert_len(tcp, data_end);
+
+  memcpy(cache_key.d_addr, ip6->ip6_dst.in6_u.u6_addr8, sizeof(__u8) * 16);
+  memcpy(cache_key.s_addr, ip6->ip6_src.in6_u.u6_addr8, sizeof(__u8) * 16);
+  cache_key.d_port = bpf_ntohs(tcp->dest);
+  cache_key.s_port = bpf_ntohs(tcp->source);
+
+  cache = bpf_map_lookup_elem(&subflow_cache, &cache_key);
+  if (cache)
+  {
+    swap_mac(eth);
+    memcpy(ip6ip6->ip6_dst.in6_u.u6_addr8, cache->dst, sizeof(__u8) * 16);
+    memcpy(ip6ip6->ip6_src.in6_u.u6_addr8, cache->src, sizeof(__u8) * 16);
+
+    return XDP_TX;
+  }
 
   return process_tcpopt(ctx, tcp + 1, eth, ip6ip6, ip6, tcp);
 }
