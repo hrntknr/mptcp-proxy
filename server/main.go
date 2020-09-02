@@ -91,7 +91,7 @@ func startServer() error {
 						result := hash.Sum(nil)
 						token := binary.BigEndian.Uint32(result[:4])
 
-						log.Debugf("new sender token: %d", token)
+						log.Debugf("New server token detected: %d", token)
 
 						json, err := json.Marshal(sessionInfo{
 							Dst: net.ParseIP(config.Dst),

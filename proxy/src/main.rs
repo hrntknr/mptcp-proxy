@@ -6,6 +6,7 @@ use afxdp::PENDING_LEN;
 use arraydeque::{ArrayDeque, Wrapping};
 use async_std::task;
 use config::{Config, Environment, File};
+use env_logger;
 use libbpf_sys::{
     bpf_map__fd, bpf_map_update_elem, bpf_object, bpf_object__find_map_by_name, bpf_prog_load,
     bpf_set_link_xdp_fd, xsk_ring_cons, xsk_ring_prod, xsk_socket, xsk_socket__create,
@@ -36,7 +37,6 @@ use std::time::Duration;
 const BACKEND_ARRAY_SIZE: usize = 64;
 
 const HUGE_TLB: bool = false;
-const QUEUE: usize = 0;
 const BUF_NUM: usize = 4096;
 const BUF_SIZE: usize = 4096;
 const BATCH_SIZE: usize = 64;
@@ -138,9 +138,11 @@ pub struct RawSocketTx<'a, T: std::default::Default + std::marker::Copy> {
 struct BufCustom {}
 
 fn main() {
+    env_logger::from_env(env_logger::Env::new().filter_or("LOG_LEVEL", "info")).init();
+
     let mut settings = Config::default();
     settings
-        .merge(File::with_name("config"))
+        .merge(File::with_name("proxy_config"))
         .unwrap()
         .merge(Environment::default())
         .unwrap();
@@ -154,14 +156,16 @@ async fn start_proxy(cfg: AppConfig) {
     assert!(setrlimit(Resource::MEMLOCK, RLIM_INFINITY, RLIM_INFINITY).is_ok());
 
     let ifaces = interfaces();
-    let ifaces = ifaces.iter().filter(|e| e.name == cfg.iface).next();
-    let iface = match ifaces {
-        Some(iface) => iface,
-        None => panic!("not found interface: {}", cfg.iface),
-    };
+    let iface = ifaces
+        .iter()
+        .filter(|e| e.name == cfg.iface)
+        .next()
+        .unwrap();
 
+    log::debug!("Connecting to redis: {}", cfg.redis);
     let client = redis::Client::open(cfg.redis).unwrap();
 
+    log::debug!("Loading bpf program: {}", cfg.xdp_prog);
     let mut obj: *mut bpf_object = std::ptr::null_mut();
     let obj_ptr: *mut *mut bpf_object = &mut obj;
     let mut prog_fd: c_int = 0;
@@ -193,6 +197,7 @@ async fn start_proxy(cfg: AppConfig) {
     let subflow_cache_fd = unsafe { bpf_map__fd(subflow_cache) };
 
     for (i, service) in cfg.services.iter().enumerate() {
+        log::debug!("Registing a vip: {}", service.vip);
         let service_key = ServiceKey {
             port: service.port,
             vip: service.vip.octets(),
@@ -217,6 +222,7 @@ async fn start_proxy(cfg: AppConfig) {
         }
 
         for (j, backend) in service.backends.iter().enumerate() {
+            log::debug!("Registing a backend: {}", backend);
             let backend_key: u32 = (BACKEND_ARRAY_SIZE * i + j) as u32;
             let backend_key_ptr = &backend_key as *const u32 as *const c_void;
             let backend_value = BackendInfo {
@@ -255,6 +261,7 @@ async fn start_proxy(cfg: AppConfig) {
         }
     }
 
+    log::debug!("Attach to interface: {}", iface.name);
     let err = unsafe {
         bpf_set_link_xdp_fd(
             iface.index as c_int,
@@ -266,6 +273,7 @@ async fn start_proxy(cfg: AppConfig) {
         panic!("bpf_set_link_xdp_fd failed")
     }
 
+    log::debug!("Creating af_xdp socket, queue_id: {}", cfg.queue_id);
     let r = MmapArea::new(BUF_NUM, BUF_SIZE, MmapAreaOptions { huge_tlb: HUGE_TLB });
     let (area, buf_pool) = match r {
         Ok((area, buf_pool)) => (area, buf_pool),
@@ -310,7 +318,7 @@ async fn start_proxy(cfg: AppConfig) {
         xsk_socket__create(
             xsk_ptr,
             if_name_c.as_ptr(),
-            QUEUE as u32,
+            cfg.queue_id as u32,
             umem.umem.lock().unwrap().as_mut(),
             rx.as_mut(),
             tx.as_mut(),
@@ -369,6 +377,9 @@ async fn start_proxy(cfg: AppConfig) {
     }
 
     let mut v: ArrayDeque<[Buf<BufCustom>; PENDING_LEN], Wrapping> = ArrayDeque::new();
+
+    log::debug!("Initialization completed");
+    log::info!("Starting the proxy...");
 
     let custom = BufCustom {};
     let mut fq_deficit = 0;
@@ -453,7 +464,7 @@ async fn start_proxy(cfg: AppConfig) {
             let r = skt1tx.try_send(&mut v, BATCH_SIZE);
             match r {
                 Ok(_) => {}
-                Err(err) => println!("error: {:?}", err),
+                Err(err) => log::error!("error: {:?}", err),
             }
         }
 
@@ -493,7 +504,7 @@ async fn process_tcp(
                         let token = unsafe { std::mem::transmute::<[u8; 4], u32>(token) }
                             .to_be()
                             .to_string();
-                        println!("mp_join: {:?}", token);
+                        log::debug!("Received mp_join, token: {}", token);
                         let mut retry = retry;
                         let info = loop {
                             task::sleep(Duration::from_millis(retry_wait as u64)).await;
@@ -512,31 +523,32 @@ async fn process_tcp(
                         let info = match info {
                             Some(s) => s,
                             None => {
-                                println!("error: token not found.");
+                                log::error!("error: token not found, token: {}", token);
                                 continue;
                             }
                         };
                         let info: SessionInfoString = match from_str(&info) {
                             Ok(info) => info,
                             Err(err) => {
-                                println!("error: {:?}", err);
+                                log::error!("error: {:?}", err);
                                 continue;
                             }
                         };
                         let src: Ipv6Addr = match info.src.parse() {
                             Ok(info) => info,
                             Err(err) => {
-                                println!("error: {:?}", err);
+                                log::error!("error: {:?}", err);
                                 continue;
                             }
                         };
                         let dst: Ipv6Addr = match info.dst.parse() {
                             Ok(info) => info,
                             Err(err) => {
-                                println!("error: {:?}", err);
+                                log::error!("error: {:?}", err);
                                 continue;
                             }
                         };
+                        log::debug!("Redirect to {}, token: {}", dst, token);
                         return Some(SessionInfo {
                             src: src,
                             dst: dst,

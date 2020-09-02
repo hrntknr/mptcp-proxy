@@ -16,10 +16,7 @@ type Config struct {
 var config Config
 
 func init() {
-	viper.SetConfigName("config.yml")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath("/etc/mptcp-server/")
-	viper.AddConfigPath("$HOME/.mptcp-server")
+	viper.SetConfigName("server_config")
 	viper.AddConfigPath(".")
 
 	viper.SetDefault("iface", "eth0")
